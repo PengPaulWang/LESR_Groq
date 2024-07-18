@@ -17,7 +17,12 @@ import psutil
 import getpass
 import pynvml
 import shutil 
-import openai
+from openai import OpenAI
+
+# Direct assignment (not secure)
+gpt_key = ''
+
+client = OpenAI(api_key=gpt_key)
 
 def import_and_reload_module(module_name):
     if module_name in sys.modules: 
@@ -110,7 +115,7 @@ def find_window_and_execute_command(command):
     print("=======================================")
     print(f"Current Train:{train} Current Window:{idx}")
     print("=======================================")
-    
+
     current_file_path = os.path.abspath(__file__)
     current_file_path = current_file_path[:current_file_path.rindex('/')]
     pm.send_keys(f'cd {current_file_path}', enter=True)
@@ -129,7 +134,7 @@ def get_cot_prompt(every_code, every_score, max_id, every_factor, every_dim, sta
         s_feedback += f'========== State Revise and Intrinsic Reward Code -- {ii + 1}\'s {policy_performance}: {round(every_score[ii], 2)} ==========\n'
         try:
             s_feedback += f'In this State Revise Code {ii + 1}, the source state dim is from s[0] to s[{state_dim - 1}], the Lipchitz constant between them and the reward are(Note: The Lipschitz constant is always greater than or equal to 0, and a lower Lipschitz constant implies better smoothness.):\n'
-            
+
             cur_dim_corr = ''
             for kk in range(0, state_dim):
                 cur_dim_corr += f's[{kk}] lipschitz constant with reward = {round(every_factor[ii][kk], 2)}\n'
@@ -142,7 +147,7 @@ def get_cot_prompt(every_code, every_score, max_id, every_factor, every_dim, sta
                 for kk in range(state_dim, every_dim[ii]):
                     cur_dim_corr += f's[{kk}] lipschitz constant with reward = {round(every_factor[ii][kk], 2)}\n'
         except: pass 
-        
+
         s_feedback += cur_dim_corr + '\n======================================================================\n\n'
 
     cot_prompt = f"""
@@ -177,9 +182,9 @@ def get_next_iteration_prompt(all_it_func_results, all_it_cot_suggestions):
         detail_content += '- `s[{}]`: '.format(ii) + content[ii] + f' , the unit is {unit[ii]}.' '\n'
 
     task_description = obs_file.iloc[0, -1]
-    
+
     total_dim = len(content)
- 
+
     if 'antmaze' in args.env.lower() or 'fetch' in args.env.lower() or 'adroit' in args.env.lower():
         additional_prompt = 'Most Importantly: As for this task, the agent should firstly learn how to coordinate various parts of the body itself before it finally reach the goal. Like a baby should learn how to walk before finally walking to the goal. Therefore, when you design state representation and reward, you should cosider how to make the agent learn to coordinate various parts of the body as well as how to finally reach the goal.\n'
     else: additional_prompt = ''
@@ -257,13 +262,12 @@ if __name__ == "__main__":
 
     gpt_key = args.openai_key
     assert gpt_key != '', 'You should pass an OpenAI Key to get access to GPT.'
-    openai.api_key = gpt_key
     temperature = args.temperature
 
     print('-' * 20)
     print('model: ', args.model)
     print('-' * 20)
-    
+
     ### find_current_observation_space ###
     env = gym.make(args.env)
     ### gym - robotics ###
@@ -272,7 +276,8 @@ if __name__ == "__main__":
     else: state_dim = env.observation_space.shape[0]
     ### gym - robotics ###
     test_state = np.random.randn(state_dim, )
-    
+
+    ###+++++++++ ChatGPT - Peng ++++++++++###
     ### set initial propmt ### 
     prompt, source_state_description = init_prompt()
     dialogs = [
@@ -287,7 +292,7 @@ if __name__ == "__main__":
     if os.path.exists(code_dir):
         shutil.rmtree(code_dir)
     os.makedirs(code_dir)
-    
+
     ### check the output training result dir ###
     sid_result_dir = os.path.join(code_dir, 'result')
     os.makedirs(sid_result_dir)
@@ -306,7 +311,7 @@ if __name__ == "__main__":
     ### init every max score ###
     every_max_score = np.zeros([args.iteration, ])
     every_max_score_id = np.zeros([args.iteration, ])
-    
+
     all_it_func_results, all_it_cot_suggestions = [], []
     ### begin iteration ### 
     for it in range(args.iteration):
@@ -329,13 +334,19 @@ if __name__ == "__main__":
             print(f"Current Iteration:{it} Current Sample Trying:{valid_sample_count + 1} Trying Count:{trying_count}")
             print("---------------------------------------")
 
+            ###+++++++++ ChatGPT - Peng
             try:
                 ### get response and parse output into python code ###
                 params = {'model':args.model, 'messages': dialogs, 'temperature':temperature }
-                completion = openai.ChatCompletion.create(**params)
-                sid_code = completion['choices'][0]['message']['content']
+                
+                ##+++++++++ ChatGPT - Peng
+                completion = client.chat.completions.create(**params)
+                sid_code = completion.choices[0].message.content
 
                 assitant_reply[valid_sample_count] = sid_code
+                
+
+                
                 ### find where is 'return' ###
                 ret_id = sid_code.rindex('return')
                 while ret_id < len(sid_code):
@@ -348,7 +359,7 @@ if __name__ == "__main__":
                 with open(cur_code_path, 'w') as fp:
                     fp.write(sid_code)
                     fp.close()
-                
+
                 ### test whether it can be executed ###
                 cur_module = import_and_reload_module(cur_code_path[:-3].replace('/', '.'))
                 cur_revise_state_v11 = cur_module.revise_state(test_state)
@@ -362,15 +373,15 @@ if __name__ == "__main__":
                 revise_lib_path_buffer.append(cur_code_path[:-3].replace('/', '.'))
                 revise_dim_buffer.append(cur_revise_dim)
                 revise_code_buffer.append(sid_code)
-                
+
                 ### valid function ###
                 valid_sample_count += 1
-                
+
             except requests.Timeout:
                 print("...request timeout...")
             except Exception as e:
                 traceback.print_exc()
-        
+
         """
             begin training using the functions
         """
@@ -381,10 +392,10 @@ if __name__ == "__main__":
                 cur_corr_result_path = f'{sid_result_dir}/it{it}_train{train}_corr_s{seed_try}.npy'
                 cur_seed = random.randint(0, 100000)
                 cur_training_command = f'CUDA_VISIBLE_DEVICES={args.cuda} python lesr_train.py --env {args.env} --revise_path {revise_lib_path_buffer[train]} --version {cur_version} --sid_result_path {cur_sid_result_path} --corr_result_path {cur_corr_result_path} --seed {cur_seed} --max_timesteps {int(args.max_timesteps)} --intrinsic_w {args.intrinsic_w}'
-                
+
                 ### find a tmux window and put it into it, then training ###
                 find_window_and_execute_command(cur_training_command)
-        
+
         """
             wait until all training ends, we should get:
             all training datas: such as reward scores +++ every dim's lipschitz constant factor
@@ -403,7 +414,7 @@ if __name__ == "__main__":
             else:
                 print(f'.......Wait Until Finished, Now it = {it}, now finished = {finish_count}.........')
             time.sleep(5)
-        
+
         """
             get mean over all seeds
         """
@@ -434,7 +445,10 @@ if __name__ == "__main__":
             best_id = int(every_max_score_id[best_it])
             best_sample_path = os.path.join(code_dir, f'it_{best_it}_sample_{best_id}.py')
             shutil.copy(best_sample_path, os.path.join(best_result_dir, f'v{args.v}-best-{args.env}.py'))
+            
         
+        ###+++++++++++++++ ChatGPT - Peng +++++++++++++++###
+
         """
             COT get analysis first, then get the final answer
         """
@@ -454,8 +468,8 @@ if __name__ == "__main__":
             try:
                     ### get response and parse output into python code ###
                     params = {'model':args.model, 'messages': dialogs, 'temperature':temperature }
-                    completion = openai.ChatCompletion.create(**params)
-                    cur_it_cot_suggestions = completion['choices'][0]['message']['content']
+                    completion = client.chat.completions.create(**params)
+                    cur_it_cot_suggestions = completion.choices[0].message.content
 
                     all_it_cot_suggestions.append(cur_it_cot_suggestions)
                     dialogs += [
@@ -468,7 +482,7 @@ if __name__ == "__main__":
                     print("...request timeout...")
             except Exception as e:
                 traceback.print_exc()
-        
+
         """
             save the dialogs
         """
@@ -482,7 +496,8 @@ if __name__ == "__main__":
                 s_dialogs += f'{cur_content}' + '\n\n'
             fp.write(s_dialogs)
             fp.close()
-        
+
+        ###+++++++++++++++ ChatGPT - Peng +++++++++++++++###
         ### get the final revise description and concat ###
         """
             get new feedback prompt, and get new dialog
@@ -504,7 +519,7 @@ if __name__ == "__main__":
 
         cur_training_command = f'CUDA_VISIBLE_DEVICES={args.cuda} python lesr_train.py --env {args.env} --eval 1 --version {args.v} --seed {cur_seed}  --sid_result_path {cur_sid_result_path} --max_timesteps {int(args.max_evaluate_timesteps)} --intrinsic_w {args.intrinsic_w}'
         find_window_and_execute_command(cur_training_command)
-    
+
     """
         wait until all evaluate ends
     """

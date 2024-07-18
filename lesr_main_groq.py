@@ -25,8 +25,7 @@ import pysnooper
 
 
 # Direct assignment (not secure)
-# groq_key = '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'
-os.environ["GROQ_API_KEY"] = "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" # You need to set the keys in the environment variables
+os.environ["GROQ_API_KEY"] = "" # You need to set the keys in the environment variables
 
 
 client = Groq(
